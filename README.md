@@ -1,2 +1,2 @@
 # user-management-backend-service
-Repositorio Back-end para el moduló Gestión de Usuarios
+Repositorio Back-end para el modulo Gestión de Usuarios
