@@ -1,0 +1,1 @@
+# user response sirve para definir los esquemas de datos que se utilizarán para validar las respuestas que se enviarán a los clientes, como la información del usuario después de la creación o el inicio de sesión. Estos esquemas se utilizan para asegurarse de que los datos enviados en las respuestas cumplen con los requisitos necesarios antes de enviarlos a los clientes.

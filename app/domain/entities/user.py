@@ -1,0 +1,1 @@
+# user sirve para definir el modelo de usuario y las funciones relacionadas con el usuario, como la creación, actualización y eliminación de usuarios

@@ -1,0 +1,1 @@
+# models sirve para definir los modelos de datos que se utilizarán en la aplicación, como el modelo de usuario, que representa la estructura de los datos de un usuario en la base de datos

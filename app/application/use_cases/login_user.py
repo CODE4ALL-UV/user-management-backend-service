@@ -1,0 +1,1 @@
+# este login user sirve para manejar la lógica de negocio relacionada con el inicio de sesión de usuarios, como validar las credenciales y generar un token de autenticación
