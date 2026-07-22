@@ -1,1 +1,14 @@
-# connection sirve para manejar la conexión a la base de datos, como establecer la conexión, cerrar la conexión y ejecutar consultas SQL. También puede incluir funciones para manejar transacciones y errores relacionados con la base de datos.
+from typing import Generator
+
+from sqlalchemy.orm import Session
+
+from core.database import SessionLocal
+
+
+def get_db() -> Generator[Session, None, None]:
+    """Provide a transactional database session for FastAPI dependencies."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
