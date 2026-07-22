@@ -4,7 +4,7 @@ from domain.repositories.user_repository import UserRepository
 
 # IMPORTANTE: Importamos tu modelo real de SQLAlchemy que apunta a la tabla "usuario"
 # Asegúrate de ajustar esta ruta según dónde hayas creado tu clase Usuario
-from infrastructure.database.models import Usuario  # O desde donde tengas tu modelo
+from infrastructure.database.models import Usuario, TipoDiscapacidad  # O desde donde tengas tu modelo
 
 class UserRepositoryImpl(UserRepository):
     def __init__(self, db_session: Session):
@@ -13,6 +13,10 @@ class UserRepositoryImpl(UserRepository):
     def get_user_by_email(self, email: str) -> Optional[Any]:
         """Busca un usuario en NeonDB usando la columna 'correo'."""
         return self.db.query(Usuario).filter(Usuario.correo == email).first()
+
+    def get_tipo_discapacidad_by_id(self, tipo_id: int) -> Optional[Any]:
+        """Busca si el tipo de discapacidad existe en la tabla TipoDiscapacidad."""
+        return self.db.query(TipoDiscapacidad).filter(TipoDiscapacidad.id_tipo == tipo_id).first()
 
     def create_user(self, user_data: dict) -> Any:
         """Guarda un nuevo usuario en la tabla 'usuario' en NeonDB."""

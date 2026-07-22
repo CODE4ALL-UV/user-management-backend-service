@@ -12,7 +12,10 @@ for directory in (PROJECT_ROOT, APP_DIR):
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from core.database import create_tables
 from presentation.api.auth_routes import router as auth_router
+
+create_tables()
 
 app = FastAPI(
     title="User Management Backend Service",

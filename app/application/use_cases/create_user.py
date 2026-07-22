@@ -24,18 +24,25 @@ class CreateUserUseCase:
         # 1. Encriptar la contraseña antes de guardarla
         hashed_password = pwd_context.hash(user_data.password)
 
-        # 2. Construir el diccionario respetando los nombres exactos de tu tabla "usuario"
+        # 2. Validar que el tipo de discapacidad exista si fue enviado.
+        tipo_discapacidad = user_data.tipo_discapacidad
+        if tipo_discapacidad is not None:
+            tipo_existente = self.user_repository.get_tipo_discapacidad_by_id(tipo_discapacidad)
+            if not tipo_existente:
+                tipo_discapacidad = None
+
+        # 3. Construir el diccionario respetando los nombres exactos de tu tabla "usuario"
         new_user_dict = {
             "nombre": user_data.nombre,
             "correo": user_data.correo,
             "password": hashed_password,
-            "tipo_discapacidad": user_data.tipo_discapacidad
+            "tipo_discapacidad": tipo_discapacidad
         }
 
-        # 3. Guardar a través del repositorio
+        # 4. Guardar a través del repositorio
         created_user = self.user_repository.create_user(new_user_dict)
 
-        # 4. Retornar los datos limpios (sin la contraseña por seguridad)
+        # 5. Retornar los datos limpios (sin la contraseña por seguridad)
         return {
             "id_usuario": created_user.id_usuario,
             "nombre": created_user.nombre,
