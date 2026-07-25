@@ -8,3 +8,5 @@ bcrypt<5
 email-validator
 psycopg2-binary
 python-jose
+google-auth
+requests
