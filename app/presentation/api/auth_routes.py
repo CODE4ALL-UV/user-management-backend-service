@@ -16,6 +16,39 @@ from infrastructure.database.connection import get_db  # Asegúrate de que esta 
 
 router = APIRouter(prefix="/api/auth", tags=["Autenticación"])
 
+
+def _parse_dev_identity(id_token: str) -> tuple[str, str]:
+    """Acepta un token local del estilo dev:correo@dominio.com o dev:correo@dominio.com:Nombre."""
+    prefix = "dev:"
+    if not id_token.startswith(prefix):
+        raise ValueError("Token no válido para modo desarrollo")
+
+    payload = id_token[len(prefix):].strip()
+    if not payload:
+        raise ValueError("El token local está vacío")
+
+    parts = [part.strip() for part in payload.split(":", 2)]
+    email = parts[0]
+    if "@" not in email:
+        raise ValueError("El token local debe incluir un correo válido")
+
+    name = parts[1] if len(parts) > 1 and parts[1] else email.split("@", 1)[0]
+    return email, name
+
+
+def _token_kind(token: str) -> str:
+    token = (token or '').strip()
+    if not token:
+        return 'empty'
+    if token.startswith('dev:'):
+        return 'dev_token'
+    if token.startswith('ya29.'):
+        return 'access_token'
+    if token.count('.') >= 2:
+        return 'id_token'
+    return 'unknown'
+
+
 # Estructura de datos que esperamos recibir en el JSON desde Flutter
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -31,7 +64,14 @@ class RegisterRequest(BaseModel):
 
 
 class IdTokenRequest(BaseModel):
-    id_token: str
+    id_token: str | None = None
+    access_token: str | None = None
+
+
+def _extract_google_token(request_data: IdTokenRequest) -> str:
+    if request_data.access_token:
+        return request_data.access_token
+    return request_data.id_token or ''
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
@@ -103,27 +143,48 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
       4) Si no existe -> crear usuario (registro) y generar JWT.
     """
     try:
-        # 1) Verificar el token con la librería oficial
-        request = google_requests.Request()
-        # Si configuras GOOGLE_CLIENT_ID en el entorno, lo usamos como audience
-        google_client_id = os.getenv("GOOGLE_CLIENT_ID")
-        if google_client_id:
-            idinfo = google_id_token.verify_oauth2_token(request_data.id_token, request, audience=google_client_id)
-        else:
-            idinfo = google_id_token.verify_oauth2_token(request_data.id_token, request)
+        token_value = _extract_google_token(request_data)
+        token_type = _token_kind(token_value)
 
-        # idinfo contiene campos como 'email', 'name', 'sub' (google user id)
-        email = idinfo.get("email")
-        name = idinfo.get("name") or idinfo.get("given_name") or ""
+        if token_type == 'dev_token':
+            email, name = _parse_dev_identity(token_value)
+            email_verified = True
+        elif token_type == 'access_token':
+            # Para un access token real, usamos Google userinfo endpoint para obtener el email.
+            import requests
 
-        # Verificar que Google indique que el email está verificado
-        # Algunos payloads usan 'email_verified' o 'verified_email'
-        email_verified = idinfo.get("email_verified") if idinfo.get("email_verified") is not None else idinfo.get("verified_email")
-        if not email_verified:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="El correo de Google no está verificado. Por favor verifica tu cuenta de Google.",
+            response = requests.get(
+                'https://www.googleapis.com/oauth2/v3/userinfo',
+                headers={'Authorization': f'Bearer {token_value}'},
+                timeout=10,
             )
+            response.raise_for_status()
+            payload = response.json()
+            email = payload.get('email')
+            name = payload.get('name') or payload.get('given_name') or ''
+            email_verified = payload.get('email_verified') is True
+        else:
+            # 1) Verificar el token con la librería oficial
+            request = google_requests.Request()
+            # Si configuras GOOGLE_CLIENT_ID en el entorno, lo usamos como audience
+            google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+            if google_client_id:
+                idinfo = google_id_token.verify_oauth2_token(token_value, request, audience=google_client_id)
+            else:
+                idinfo = google_id_token.verify_oauth2_token(token_value, request)
+
+            # idinfo contiene campos como 'email', 'name', 'sub' (google user id)
+            email = idinfo.get("email")
+            name = idinfo.get("name") or idinfo.get("given_name") or ""
+
+            # Verificar que Google indique que el email está verificado
+            # Algunos payloads usan 'email_verified' o 'verified_email'
+            email_verified = idinfo.get("email_verified") if idinfo.get("email_verified") is not None else idinfo.get("verified_email")
+            if not email_verified:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="El correo de Google no está verificado. Por favor verifica tu cuenta de Google.",
+                )
 
         if not email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ID token inválido: falta email")

@@ -1,1 +1,19 @@
-# test auth sirve para definir las pruebas unitarias y de integración relacionadas con el módulo de autenticación, como el inicio de sesión, la generación de tokens y la validación de credenciales. Estas pruebas se utilizan para asegurarse de que el módulo de autenticación funciona correctamente y cumple con los requisitos establecidos en la lógica de negocio.
+from app.presentation.api.auth_routes import _parse_dev_identity, _token_kind, _extract_google_token, IdTokenRequest
+
+
+def test_parse_dev_identity_accepts_local_token():
+    email, name = _parse_dev_identity('dev:usuario@local.test:Juan')
+
+    assert email == 'usuario@local.test'
+    assert name == 'Juan'
+
+
+def test_token_kind_detects_google_access_tokens():
+    assert _token_kind('ya29.a0ExampleAccessToken') == 'access_token'
+    assert _token_kind('eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.abc.def') == 'id_token'
+
+
+def test_extract_google_token_prefers_access_token_when_present():
+    request = IdTokenRequest(access_token='access-token-value', id_token='id-token-value')
+
+    assert _extract_google_token(request) == 'access-token-value'
