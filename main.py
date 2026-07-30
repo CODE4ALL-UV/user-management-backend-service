@@ -3,6 +3,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 APP_DIR = PROJECT_ROOT / "app"
+UPLOAD_DIR = PROJECT_ROOT / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 for directory in (PROJECT_ROOT, APP_DIR):
     directory_str = str(directory)
@@ -11,9 +13,11 @@ for directory in (PROJECT_ROOT, APP_DIR):
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from core.database import create_tables, ensure_user_role_column
 from presentation.api.auth_routes import router as auth_router
+from presentation.api.upload_routes import router as upload_router
 
 create_tables()
 ensure_user_role_column()
@@ -32,6 +36,8 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(upload_router)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 @app.get("/")
 def read_root():

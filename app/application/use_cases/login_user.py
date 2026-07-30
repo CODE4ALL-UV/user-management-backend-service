@@ -28,11 +28,14 @@ class LoginUserUseCase:
         )
 
         # 4. Devolver respuesta lista para Flutter con tus nombres exactos
+        photo_url = getattr(user, "foto_path", None) or getattr(user, "photo_path", None) or ""
+
         return {
             "access_token": access_token,
             "token_type": "bearer",
             "user_id": user.id_usuario,
             "email": user.correo,
             "nombre": user.nombre,
-            "rol": user.rol
+            "rol": user.rol,
+            "photo_url": photo_url,
         }

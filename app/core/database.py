@@ -22,14 +22,17 @@ def create_tables() -> None:
 
 
 def ensure_user_role_column() -> None:
-    """Agrega la columna rol a la tabla Usuario si aún no existe."""
+    """Agrega las columnas necesarias a la tabla Usuario si aún no existen."""
     inspector = inspect(engine)
     if "Usuario" not in inspector.get_table_names():
         return
 
     columns = {column["name"] for column in inspector.get_columns("Usuario")}
-    if "rol" in columns:
-        return
 
-    with engine.begin() as connection:
-        connection.execute(text('ALTER TABLE "Usuario" ADD COLUMN "rol" VARCHAR(20) DEFAULT \'estudiante\''))
+    if "rol" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text('ALTER TABLE "Usuario" ADD COLUMN "rol" VARCHAR(20) DEFAULT \'estudiante\''))
+
+    if "foto_path" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text('ALTER TABLE "Usuario" ADD COLUMN "foto_path" VARCHAR(500) NULL'))

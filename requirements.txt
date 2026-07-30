@@ -10,5 +10,6 @@ psycopg2-binary
 python-jose
 google-auth
 requests
-jwt
 PyJWT
+python-dotenv
+python-multipart

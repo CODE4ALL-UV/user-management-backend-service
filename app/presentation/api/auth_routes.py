@@ -144,6 +144,7 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
                 "email": existing_user.correo,
                 "nombre": existing_user.nombre,
                 "rol": existing_user.rol,
+                "photo_url": getattr(existing_user, "foto_path", None) or "",
             }
 
         # 3) Si no existe, registrar uno nuevo usando el caso de uso existente

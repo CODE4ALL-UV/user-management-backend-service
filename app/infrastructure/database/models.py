@@ -20,3 +20,4 @@ class Usuario(Base):
     fecha_registro = Column(Date, server_default=func.current_date())
     tipo_discapacidad = Column(Integer, ForeignKey("TipoDiscapacidad.id_tipo"), nullable=True)
     rol = Column(String(20), nullable=False, server_default="estudiante")
+    foto_path = Column(String(500), nullable=True)
