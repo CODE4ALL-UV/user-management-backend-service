@@ -33,5 +33,6 @@ class LoginUserUseCase:
             "token_type": "bearer",
             "user_id": user.id_usuario,
             "email": user.correo,
-            "nombre": user.nombre
+            "nombre": user.nombre,
+            "rol": user.rol
         }

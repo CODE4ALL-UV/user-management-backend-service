@@ -8,6 +8,16 @@ class CreateUserUseCase:
     def __init__(self, user_repository: UserRepository):
         self.user_repository = user_repository
 
+    def _normalize_role(self, role_value) -> str:
+        if role_value is None:
+            return "estudiante"
+
+        normalized_role = str(role_value).strip().lower()
+        if normalized_role in {"estudiante", "docente", "director"}:
+            return normalized_role
+
+        return "estudiante"
+
     def execute(self, user_data) -> dict:
         """
         Caso de uso para registrar un nuevo usuario:
@@ -36,7 +46,8 @@ class CreateUserUseCase:
             "nombre": user_data.nombre,
             "correo": user_data.correo,
             "password": hashed_password,
-            "tipo_discapacidad": tipo_discapacidad
+            "tipo_discapacidad": tipo_discapacidad,
+            "rol": self._normalize_role(getattr(user_data, "rol", None))
         }
 
         # 4. Guardar a través del repositorio
@@ -48,5 +59,6 @@ class CreateUserUseCase:
             "nombre": created_user.nombre,
             "correo": created_user.correo,
             "tipo_discapacidad": created_user.tipo_discapacidad,
-            "fecha_registro": str(created_user.fecha_registro)
+            "fecha_registro": str(created_user.fecha_registro),
+            "rol": created_user.rol
         }

@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from dotenv import load_dotenv
 
@@ -19,3 +19,17 @@ Base = declarative_base()
 def create_tables() -> None:
     """Create all SQLAlchemy model tables."""
     Base.metadata.create_all(bind=engine)
+
+
+def ensure_user_role_column() -> None:
+    """Agrega la columna rol a la tabla Usuario si aún no existe."""
+    inspector = inspect(engine)
+    if "Usuario" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("Usuario")}
+    if "rol" in columns:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(text('ALTER TABLE "Usuario" ADD COLUMN "rol" VARCHAR(20) DEFAULT \'estudiante\''))

@@ -27,6 +27,7 @@ class RegisterRequest(BaseModel):
     correo: EmailStr
     password: str
     tipo_discapacidad: int | None = None
+    rol: str | None = None
 
 
 class IdTokenRequest(BaseModel):
@@ -142,6 +143,7 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
                 "user_id": existing_user.id_usuario,
                 "email": existing_user.correo,
                 "nombre": existing_user.nombre,
+                "rol": existing_user.rol,
             }
 
         # 3) Si no existe, registrar uno nuevo usando el caso de uso existente
@@ -150,13 +152,14 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
 
         # Construir un objeto similar al que espera CreateUserUseCase
         class _TmpRegister:
-            def __init__(self, nombre, correo, password, tipo_discapacidad=None):
+            def __init__(self, nombre, correo, password, tipo_discapacidad=None, rol=None):
                 self.nombre = nombre
                 self.correo = correo
                 self.password = password
                 self.tipo_discapacidad = tipo_discapacidad
+                self.rol = rol
 
-        tmp = _TmpRegister(nombre=name or email.split("@")[0], correo=email, password=random_password, tipo_discapacidad=None)
+        tmp = _TmpRegister(nombre=name or email.split("@")[0], correo=email, password=random_password, tipo_discapacidad=None, rol="estudiante")
 
         use_case = CreateUserUseCase(user_repository=repo)
         created = use_case.execute(tmp)
@@ -165,7 +168,7 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
         from core.security import create_access_token
         token = create_access_token(data={"sub": str(created["id_usuario"]), "email": created["correo"]})
 
-        return {"access_token": token, "token_type": "bearer", "user_id": created["id_usuario"], "email": created["correo"], "nombre": created["nombre"]}
+        return {"access_token": token, "token_type": "bearer", "user_id": created["id_usuario"], "email": created["correo"], "nombre": created["nombre"], "rol": created["rol"]}
 
     except ValueError as e:
         # Errores lanzados por google-auth al verificar el token
