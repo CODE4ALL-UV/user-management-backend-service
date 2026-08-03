@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from core.database import create_tables, ensure_user_role_column
 from presentation.api.auth_routes import router as auth_router
 from presentation.api.upload_routes import router as upload_router
+from presentation.api.director_routes import router as director_router
 
 create_tables()
 ensure_user_role_column()
@@ -37,6 +38,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(upload_router)
+app.include_router(director_router)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 @app.get("/")
