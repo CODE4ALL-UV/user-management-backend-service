@@ -13,3 +13,5 @@ requests
 PyJWT
 python-dotenv
 python-multipart
+youtube-transcript-api
+requests
