@@ -6,10 +6,47 @@ from dotenv import load_dotenv
 # Carga obligatoria de las variables del archivo .env
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+def _clean_database_url(raw: str | None) -> str:
+    """Deja la cadena de conexion utilizable, o explica que le falta.
 
-if not DATABASE_URL:
-    raise ValueError("⚠️ No se encontró la variable DATABASE_URL en el archivo .env. Revisa que esté creada y guardada.")
+    Al copiarla de un archivo .env es facil arrastrar las comillas, y entonces
+    SQLAlchemy falla con «Could not parse SQLAlchemy URL», que no dice a nadie
+    que el problema son dos comillas. Aqui se quitan y, si aun asi no sirve, se
+    dice en castellano que esta mal.
+    """
+    if raw is None:
+        raise ValueError(
+            "Falta la variable DATABASE_URL. En Render se escribe en "
+            "Environment; en local, en el archivo .env."
+        )
+
+    url = raw.strip()
+
+    # Comillas arrastradas al copiar la linea entera del .env.
+    for quote in ('"', "'"):
+        if len(url) >= 2 and url.startswith(quote) and url.endswith(quote):
+            url = url[1:-1].strip()
+
+    if not url:
+        raise ValueError(
+            "La variable DATABASE_URL esta vacia. Copia la cadena de "
+            "conexion de Neon, sin comillas."
+        )
+
+    # Algunos paneles dan la forma antigua; SQLAlchemy quiere postgresql://.
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+
+    if "://" not in url:
+        raise ValueError(
+            "DATABASE_URL no parece una cadena de conexion: deberia empezar "
+            f"por postgresql://. Llego esto: {url[:24]}..."
+        )
+
+    return url
+
+
+DATABASE_URL = _clean_database_url(os.getenv("DATABASE_URL"))
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
