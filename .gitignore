@@ -1,0 +1,10 @@
+# Modelo de MediaPipe: se descarga solo la primera vez (7,8 MB)
+models/
+
+# Bytecode: se regenera en cada maquina y solo provoca conflictos
+__pycache__/
+*.pyc
+
+# Entorno virtual
+.venv/
+venv/

@@ -21,6 +21,7 @@ from presentation.api.upload_routes import router as upload_router
 from presentation.api.director_routes import router as director_router
 from presentation.api.youtube_routes import router as youtube_router
 from presentation.api.modules_routes import router as modules_router
+from presentation.api.sign_routes import router as sign_router
 
 create_tables()
 ensure_user_role_column()
@@ -43,6 +44,7 @@ app.include_router(upload_router)
 app.include_router(director_router)
 app.include_router(youtube_router)
 app.include_router(modules_router)
+app.include_router(sign_router)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 @app.get("/")
