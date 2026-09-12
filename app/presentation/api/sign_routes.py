@@ -37,6 +37,14 @@ _landmarker = None
 _landmarker_lock = threading.Lock()
 _import_error: Optional[str] = None
 
+# Por que fallo al crear el detector, si es que ya se intento.
+#
+# Importar mediapipe puede salir bien y aun asi fallar al construirlo: le
+# faltan librerias del sistema, o memoria. Sin recordarlo, /status seguiria
+# diciendo que todo va bien mientras cada peticion falla, y la aplicacion
+# ofreceria la camara para romperse justo despues.
+_landmarker_error: Optional[str] = None
+
 try:
     import cv2
     import mediapipe as mp
@@ -63,12 +71,15 @@ def _ensure_model() -> Path:
 
 
 def _get_landmarker():
-    global _landmarker
+    global _landmarker, _landmarker_error
 
     if _import_error is not None:
         raise RuntimeError(
             "Falta instalar mediapipe y opencv en el backend: " + _import_error
         )
+
+    if _landmarker_error is not None:
+        raise RuntimeError(_landmarker_error)
 
     if _landmarker is None:
         model = _ensure_model()
@@ -79,7 +90,15 @@ def _get_landmarker():
             min_hand_detection_confidence=0.4,
             min_hand_presence_confidence=0.4,
         )
-        _landmarker = vision.HandLandmarker.create_from_options(options)
+        try:
+            _landmarker = vision.HandLandmarker.create_from_options(options)
+        except Exception as exc:
+            # Se recuerda para no reintentarlo en cada peticion y, sobre todo,
+            # para que /status lo diga en lugar de fingir que todo va bien.
+            _landmarker_error = (
+                f"El servidor no puede crear el detector de manos: {exc}"
+            )
+            raise RuntimeError(_landmarker_error)
 
     return _landmarker
 
@@ -95,6 +114,13 @@ def sign_status():
             "available": False,
             "model_ready": False,
             "reason": "Faltan dependencias en el backend: " + _import_error,
+        }
+
+    if _landmarker_error is not None:
+        return {
+            "available": False,
+            "model_ready": MODEL_PATH.exists(),
+            "reason": _landmarker_error,
         }
 
     return {

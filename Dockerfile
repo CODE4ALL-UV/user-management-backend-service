@@ -11,10 +11,18 @@
 
 FROM python:3.12-slim
 
-# Librerias que piden MediaPipe y OpenCV. Son las minimas: opencv-python-headless
-# ya evita todo lo relacionado con ventanas.
+# Librerias del sistema que piden MediaPipe y OpenCV.
+#
+# MediaPipe arrastra la pila de OpenGL aunque solo use la CPU. Sin libEGL
+# falla al CREAR el detector, no al importarse, asi que el error no sale al
+# arrancar sino en la primera peticion de verdad: el servicio parece sano y
+# se cae en cuanto alguien usa la camara.
+#
+# opencv-python-headless ya evita por su cuenta todo lo de ventanas.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
+    libegl1 \
+    libgles2 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
