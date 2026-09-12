@@ -23,8 +23,15 @@ class LoginUserUseCase:
             )
 
         # 3. Si todo está perfecto, crear el token JWT usando tus campos reales (id_usuario y correo)
+        # El rol viaja dentro del token, firmado por el servidor. Asi, cuando
+        # el docente edite el temario, el servidor sabe que es docente de
+        # verdad y no porque se lo diga el dispositivo, que podria mentir.
         access_token = create_access_token(
-            data={"sub": str(user.id_usuario), "email": user.correo}
+            data={
+                "sub": str(user.id_usuario),
+                "email": user.correo,
+                "rol": user.rol,
+            }
         )
 
         # 4. Devolver respuesta lista para Flutter con tus nombres exactos

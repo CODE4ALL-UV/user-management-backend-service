@@ -36,3 +36,23 @@ def ensure_user_role_column() -> None:
     if "foto_path" not in columns:
         with engine.begin() as connection:
             connection.execute(text('ALTER TABLE "Usuario" ADD COLUMN "foto_path" VARCHAR(500) NULL'))
+
+
+def ensure_quiz_answer_columns() -> None:
+    """Agrega a QuizAnswer las columnas nuevas si la tabla ya existia.
+
+    create_all() crea tablas, pero no toca las que ya estan. Sin esto, medir
+    el tiempo de respuesta fallaria en cualquier base donde la tabla se creo
+    antes de anadir la columna: justo la de quien ya venia usando la app.
+    """
+    inspector = inspect(engine)
+    if "QuizAnswer" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("QuizAnswer")}
+
+    if "elapsed_ms" not in columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text('ALTER TABLE "QuizAnswer" ADD COLUMN "elapsed_ms" INTEGER NULL')
+            )
