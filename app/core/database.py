@@ -33,14 +33,28 @@ def _clean_database_url(raw: str | None) -> str:
             "conexion de Neon, sin comillas."
         )
 
+    # Los paneles muestran la cadena partida en varias lineas para que quepa.
+    # Al copiarla se cuelan saltos de linea y espacios que no forman parte de
+    # ella: una URL de conexion nunca lleva espacios en blanco.
+    url = "".join(url.split())
+
     # Algunos paneles dan la forma antigua; SQLAlchemy quiere postgresql://.
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
 
     if "://" not in url:
+        # El caso mas comun: se copio solo el final, desde el signo de
+        # interrogacion. Decirlo ahorra buscar a ciegas.
+        if url.startswith("?") or url.startswith("sslmode="):
+            raise ValueError(
+                "DATABASE_URL solo trae la parte final de la cadena "
+                f"({url[:30]}...). Falta todo lo de delante. Copiala entera, "
+                "desde postgresql:// hasta el final, en una sola linea."
+            )
+
         raise ValueError(
             "DATABASE_URL no parece una cadena de conexion: deberia empezar "
-            f"por postgresql://. Llego esto: {url[:24]}..."
+            f"por postgresql://. Llego esto: {url[:30]}..."
         )
 
     return url
