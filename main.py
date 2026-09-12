@@ -26,9 +26,19 @@ from presentation.api.course_content_routes import router as course_content_rout
 from presentation.api.analytics_routes import router as analytics_router
 from presentation.api.director_oversight_routes import router as oversight_router
 
-create_tables()
-ensure_user_role_column()
-ensure_quiz_answer_columns()
+# Preparar la base al arrancar, pero sin que un fallo tumbe el servicio.
+#
+# Neon se duerme cuando lleva un rato sin uso. Si justo esta dormida cuando el
+# servidor arranca, esto tardaria o fallaria, y sin proteccion el despliegue
+# entero se daria por fallido aunque la aplicacion este perfecta. Se registra
+# el problema y se sigue: la primera peticion de verdad reabrira la conexion.
+try:
+    create_tables()
+    ensure_user_role_column()
+    ensure_quiz_answer_columns()
+except Exception as exc:  # pragma: no cover - depende del entorno
+    print(f"[arranque] No se pudo preparar la base de datos: {exc}")
+    print("[arranque] El servicio arranca igualmente; se reintentara al usarla.")
 
 app = FastAPI(
     title="User Management Backend Service",

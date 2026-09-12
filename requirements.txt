@@ -14,7 +14,6 @@ PyJWT
 python-dotenv
 python-multipart
 youtube-transcript-api
-requests
 mediapipe
-opencv-contrib-python
+opencv-python-headless
 numpy
