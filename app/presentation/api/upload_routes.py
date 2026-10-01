@@ -8,11 +8,17 @@ from sqlalchemy.orm import Session
 from infrastructure.database.connection import get_db
 from infrastructure.database.user_repository_impl import UserRepositoryImpl
 
+from .auth_guard import Caller, current_caller
+
 router = APIRouter(prefix="/api/user", tags=["Usuario"])
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 UPLOAD_DIR = PROJECT_ROOT / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Una foto de perfil no necesita más. Sin límite, el archivo entero se leía a
+# memoria y cualquiera podía tumbar el servicio subiendo algo enorme.
+MAX_PHOTO_BYTES = 5 * 1024 * 1024
 
 
 @router.post("/upload-photo", status_code=status.HTTP_200_OK)
@@ -21,10 +27,20 @@ def upload_photo(
     db: Session = Depends(get_db),
     user_id: Optional[int] = Form(default=None),
     user_id_query: Optional[int] = Query(default=None),
+    caller: Caller = Depends(current_caller),
 ):
-    effective_user_id = user_id if user_id is not None else user_id_query
-    if effective_user_id is None:
-        raise HTTPException(status_code=400, detail="No se recibió el id del usuario")
+    # La foto es de quien tiene la sesión. Antes bastaba con mandar cualquier
+    # id para cambiarle la foto a otra persona, sin haber iniciado sesión.
+    # El id del formulario se sigue aceptando por compatibilidad, pero tiene
+    # que ser el mismo del token.
+    if caller.user_id is None:
+        raise HTTPException(status_code=401, detail="La sesión no identifica a nadie.")
+
+    requested_id = user_id if user_id is not None else user_id_query
+    if requested_id is not None and requested_id != caller.user_id:
+        raise HTTPException(status_code=403, detail="Solo puedes cambiar tu propia foto.")
+
+    effective_user_id = caller.user_id
 
     if file is None or not getattr(file, "filename", None):
         raise HTTPException(status_code=400, detail="No se recibió ningún archivo")
@@ -42,9 +58,13 @@ def upload_photo(
     destination = UPLOAD_DIR / filename
 
     try:
-        contents = file.file.read()
+        contents = file.file.read(MAX_PHOTO_BYTES + 1)
+        if len(contents) > MAX_PHOTO_BYTES:
+            raise HTTPException(status_code=413, detail="La foto no puede pasar de 5 MB.")
         with destination.open("wb") as f:
             f.write(contents)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"No se pudo guardar la imagen: {exc}") from exc
 

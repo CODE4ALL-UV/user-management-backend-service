@@ -40,6 +40,13 @@ services:
       - key: GOOGLE_SERVER_CLIENT_ID
         sync: false
 
+      # Códigos para registrarse como docente o director. Sin ellos esos
+      # registros quedan cerrados: solo se crean estudiantes.
+      - key: DOCENTE_SIGNUP_CODE
+        sync: false
+      - key: DIRECTOR_SIGNUP_CODE
+        sync: false
+
     # Render llama aquí para saber si el servicio sigue vivo. Esta ruta no
     # toca la base de datos, así que responde aunque Neon esté dormida.
     healthCheckPath: /api/signs/status

@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -46,10 +47,25 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Desde qué páginas puede un navegador llamar a este API: la web publicada en
+# Render y, para desarrollar, localhost en cualquier puerto. CORS_ORIGINS
+# (separados por comas) añade otros sin tocar el código, por ejemplo un
+# dominio propio. Antes era "*" con credenciales, que el navegador traduce en
+# «cualquier página puede llamar en nombre del usuario».
+#
+# Sin credenciales: la sesión viaja en la cabecera Authorization, no en
+# cookies, así que no hacen falta.
+CORS_ORIGINS = ["https://code4all-web.onrender.com"] + [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

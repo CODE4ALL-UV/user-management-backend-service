@@ -45,6 +45,36 @@ def _dev_login_enabled() -> bool:
     return os.getenv("ALLOW_DEV_LOGIN", "").strip().lower() in {"1", "true", "yes"}
 
 
+STAFF_ROLES = {"docente", "director"}
+
+
+def _check_staff_invitation(rol: str | None, code: str | None) -> None:
+    """Docente y director solo se registran con el código de su rol.
+
+    Antes el rol se elegía en el formulario y el servidor lo aceptaba tal
+    cual: cualquiera podía darse de alta como director y ver a todos los
+    estudiantes, o como docente y reescribir el curso.
+
+    Los códigos se configuran en el servidor (DOCENTE_SIGNUP_CODE y
+    DIRECTOR_SIGNUP_CODE). Si no hay código para un rol, ese registro queda
+    cerrado. El rol de estudiante no necesita nada.
+    """
+    requested = (rol or "estudiante").strip().lower()
+    if requested not in STAFF_ROLES:
+        return
+
+    expected = os.getenv(f"{requested.upper()}_SIGNUP_CODE", "").strip()
+    given = (code or "").strip()
+    if not expected or not secrets.compare_digest(given.encode(), expected.encode()):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Para registrarte como {requested} necesitas el código de "
+                "invitación que entrega la coordinación del curso."
+            ),
+        )
+
+
 def _token_kind(token: str) -> str:
     token = (token or '').strip()
     if not token:
@@ -70,6 +100,8 @@ class RegisterRequest(BaseModel):
     password: str
     tipo_discapacidad: int | None = None
     rol: str | None = None
+    # Solo para docente o director: el que da la coordinación.
+    codigo_invitacion: str | None = None
 
 
 class IdTokenRequest(BaseModel):
@@ -88,6 +120,8 @@ def register_endpoint(request_data: RegisterRequest, db: Session = Depends(get_d
     """
     Ruta HTTP que consumirá Flutter: POST /api/auth/register
     """
+    _check_staff_invitation(request_data.rol, request_data.codigo_invitacion)
+
     try:
         repo = UserRepositoryImpl(db)
         use_case = CreateUserUseCase(user_repository=repo)
@@ -210,7 +244,13 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
         if existing_user:
             # Generar token directamente para el usuario existente
             from user_management_service.core.security import create_access_token
-            token = create_access_token(data={"sub": str(existing_user.id_usuario), "email": existing_user.correo})
+            token = create_access_token(
+                data={
+                    "sub": str(existing_user.id_usuario),
+                    "email": existing_user.correo,
+                    "rol": existing_user.rol,
+                }
+            )
 
             return {
                 "access_token": token,
@@ -242,7 +282,13 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
 
         # Crear token para el nuevo usuario
         from user_management_service.core.security import create_access_token
-        token = create_access_token(data={"sub": str(created["id_usuario"]), "email": created["correo"]})
+        token = create_access_token(
+            data={
+                "sub": str(created["id_usuario"]),
+                "email": created["correo"],
+                "rol": created["rol"],
+            }
+        )
 
         return {"access_token": token, "token_type": "bearer", "user_id": created["id_usuario"], "email": created["correo"], "nombre": created["nombre"], "rol": created["rol"]}
 

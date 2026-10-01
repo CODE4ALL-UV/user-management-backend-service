@@ -33,3 +33,59 @@ def test_dev_token_is_rejected_unless_enabled(monkeypatch):
 
     assert error.value.status_code == 401
 
+
+def test_staff_roles_need_their_invitation_code(monkeypatch):
+    # Antes el rol del formulario se aceptaba tal cual: cualquiera se daba de
+    # alta como director.
+    from app.presentation.api.auth_routes import _check_staff_invitation
+
+    monkeypatch.setenv('DOCENTE_SIGNUP_CODE', 'clave-docente')
+    monkeypatch.delenv('DIRECTOR_SIGNUP_CODE', raising=False)
+
+    # Estudiante no necesita código.
+    _check_staff_invitation(None, None)
+    _check_staff_invitation('estudiante', None)
+    # Docente con su código, sin importar mayúsculas en el rol.
+    _check_staff_invitation('Docente', ' clave-docente ')
+
+    rejected = [
+        ('docente', None),
+        ('docente', 'otra-clave'),
+        # El código de docente no abre la puerta de director.
+        ('director', 'clave-docente'),
+        # Sin código configurado, el registro de director queda cerrado.
+        ('director', ''),
+    ]
+    for rol, code in rejected:
+        with pytest.raises(HTTPException) as error:
+            _check_staff_invitation(rol, code)
+        assert error.value.status_code == 403, (rol, code)
+
+
+def test_google_session_carries_the_role(monkeypatch):
+    # Sin el rol en el token, un docente que entraba con Google recibía 403
+    # al editar el curso.
+    from types import SimpleNamespace
+
+    import app.presentation.api.auth_routes as auth_routes
+    from core.security import decode_access_token
+
+    class FakeRepo:
+        def __init__(self, db):
+            pass
+
+        def get_user_by_email(self, email):
+            return SimpleNamespace(
+                id_usuario=5, correo=email, nombre='Laura', rol='docente', foto_path=None
+            )
+
+    monkeypatch.setenv('ALLOW_DEV_LOGIN', '1')
+    monkeypatch.setattr(auth_routes, 'UserRepositoryImpl', FakeRepo)
+
+    result = auth_routes.google_sign_in(
+        IdTokenRequest(id_token='dev:laura@univalle.edu.co'), db=None
+    )
+
+    claims = decode_access_token(result['access_token'])
+    assert claims['rol'] == 'docente'
+    assert claims['sub'] == '5'
