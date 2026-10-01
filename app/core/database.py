@@ -42,6 +42,13 @@ def _clean_database_url(raw: str | None) -> str:
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
 
+    # El driver va explicito. SQLAlchemy 2.1 cambio el que usa por defecto
+    # para postgresql:// (ahora busca psycopg 3), y el instalado es psycopg2:
+    # sin esto el servidor no arranca en cuanto pip trae la 2.1. Si la cadena
+    # ya dice su driver, se respeta.
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
+
     if "://" not in url:
         # El caso mas comun: se copio solo el final, desde el signo de
         # interrogacion. Decirlo ahorra buscar a ciegas.
