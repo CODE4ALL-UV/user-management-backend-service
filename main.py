@@ -25,6 +25,7 @@ from presentation.api.sign_routes import router as sign_router
 from presentation.api.course_content_routes import router as course_content_router
 from presentation.api.analytics_routes import router as analytics_router
 from presentation.api.director_oversight_routes import router as oversight_router
+from presentation.api.braille_routes import router as braille_router
 
 # Preparar la base al arrancar, pero sin que un fallo tumbe el servicio.
 #
@@ -62,6 +63,7 @@ app.include_router(sign_router)
 app.include_router(course_content_router)
 app.include_router(analytics_router)
 app.include_router(oversight_router)
+app.include_router(braille_router)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 @app.get("/")
