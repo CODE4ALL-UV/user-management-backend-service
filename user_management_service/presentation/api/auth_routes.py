@@ -36,6 +36,15 @@ def _parse_dev_identity(id_token: str) -> tuple[str, str]:
     return email, name
 
 
+def _dev_login_enabled() -> bool:
+    """Los tokens `dev:` solo valen si se piden a propósito, en local.
+
+    Sin esta comprobación cualquiera podía enviar `dev:correo` al login con
+    Google y entrar con la cuenta de esa persona, también la de la dirección.
+    """
+    return os.getenv("ALLOW_DEV_LOGIN", "").strip().lower() in {"1", "true", "yes"}
+
+
 def _token_kind(token: str) -> str:
     token = (token or '').strip()
     if not token:
@@ -147,6 +156,11 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
         token_type = _token_kind(token_value)
 
         if token_type == 'dev_token':
+            if not _dev_login_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token de Google no válido",
+                )
             email, name = _parse_dev_identity(token_value)
             email_verified = True
         elif token_type == 'access_token':

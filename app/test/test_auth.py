@@ -1,3 +1,6 @@
+import pytest
+from fastapi import HTTPException
+
 from app.presentation.api.auth_routes import _parse_dev_identity, _token_kind, _extract_google_token, IdTokenRequest
 
 
@@ -17,3 +20,16 @@ def test_extract_google_token_prefers_access_token_when_present():
     request = IdTokenRequest(access_token='access-token-value', id_token='id-token-value')
 
     assert _extract_google_token(request) == 'access-token-value'
+
+
+def test_dev_token_is_rejected_unless_enabled(monkeypatch):
+    # Con un token dev: cualquiera podía entrar con la cuenta de la dirección.
+    from app.presentation.api.auth_routes import google_sign_in
+
+    monkeypatch.delenv('ALLOW_DEV_LOGIN', raising=False)
+
+    with pytest.raises(HTTPException) as error:
+        google_sign_in(IdTokenRequest(id_token='dev:director@univalle.edu.co'), db=None)
+
+    assert error.value.status_code == 401
+
