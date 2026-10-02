@@ -26,3 +26,13 @@ class UserRepository(ABC):
     def update_photo_path(self, user_id: int, photo_path: str) -> Any:
         """Debe actualizar la ruta de la foto del usuario."""
         pass
+
+    @abstractmethod
+    def find_by_email_any_case(self, email: str) -> Optional[Any]:
+        """Busca por correo sin distinguir mayúsculas."""
+        pass
+
+    @abstractmethod
+    def update_password(self, user_id: int, password_hash: str) -> Any:
+        """Guarda el hash de una contraseña nueva."""
+        pass

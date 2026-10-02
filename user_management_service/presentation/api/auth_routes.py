@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
+import hashlib
+import hmac
 import secrets
+
+import requests
 
 # Dependencias para verificar ID token de Google
 from google.oauth2 import id_token as google_id_token
@@ -11,6 +15,8 @@ import os
 # Importaciones de tu propia arquitectura
 from user_management_service.application.use_cases.create_user import CreateUserUseCase
 from user_management_service.application.use_cases.login_user import LoginUserUseCase
+from user_management_service.application.use_cases import password_reset
+from user_management_service.core import mailer
 from user_management_service.infrastructure.database.user_repository_impl import UserRepositoryImpl
 from neon_storage import get_db
 
@@ -175,15 +181,149 @@ def login_endpoint(request_data: LoginRequest, db: Session = Depends(get_db)):
         )
 
 
+GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+# Sin versión: Facebook usa la que tenga fijada la app en su panel. Con una
+# versión escrita aquí, el código dejaría de funcionar cuando caducara.
+FACEBOOK_GRAPH_URL = "https://graph.facebook.com"
+
+DEFAULT_FRONTEND_URL = "https://code4all-web.onrender.com"
+
+
+def _google_client_ids() -> set[str]:
+    """Los Client ID de Google de la app. Se pueden poner varios, con comas."""
+    raw = os.getenv("GOOGLE_CLIENT_ID", "")
+    ids = {part.strip() for part in raw.split(",") if part.strip()}
+    if not ids:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El inicio con Google no está configurado en el servidor (falta GOOGLE_CLIENT_ID).",
+        )
+    return ids
+
+
+def _google_identity_from_access_token(token: str, client_ids: set[str]) -> tuple[str, str, bool]:
+    """Correo, nombre y si Google verificó el correo, a partir de un access token.
+
+    Antes se preguntaba directamente a userinfo, que responde a cualquier
+    access token de Google, sea de la app que sea. Una página cualquiera con
+    «Iniciar sesión con Google» podía usar el token de sus visitantes para
+    entrar en Code4All como ellos. tokeninfo dice para qué app se emitió.
+    """
+    info = requests.get(GOOGLE_TOKENINFO_URL, params={"access_token": token}, timeout=10)
+    if info.status_code != 200:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de Google no válido")
+    data = info.json()
+
+    if data.get("aud") not in client_ids and data.get("azp") not in client_ids:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ese inicio de sesión de Google no es de Code4All.",
+        )
+
+    email = data.get("email")
+    verified = str(data.get("email_verified", "")).lower() == "true"
+
+    name = ""
+    profile = requests.get(
+        GOOGLE_USERINFO_URL,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    if profile.status_code == 200:
+        payload = profile.json()
+        name = payload.get("name") or payload.get("given_name") or ""
+
+    return email, name, verified
+
+
+def _google_identity_from_id_token(token: str, client_ids: set[str]) -> tuple[str, str, bool]:
+    request = google_requests.Request()
+    # verify_oauth2_token sin audience aceptaba ID tokens de cualquier app.
+    idinfo = google_id_token.verify_oauth2_token(token, request)
+    if idinfo.get("aud") not in client_ids:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ese inicio de sesión de Google no es de Code4All.",
+        )
+
+    email = idinfo.get("email")
+    name = idinfo.get("name") or idinfo.get("given_name") or ""
+    verified = idinfo.get("email_verified")
+    if verified is None:
+        verified = idinfo.get("verified_email")
+    return email, name, verified is True or str(verified).lower() == "true"
+
+
+def _session_for(db: Session, email: str, name: str) -> dict:
+    """Abre sesión con la cuenta de ese correo, o la crea como estudiante.
+
+    Lo comparten Google y Facebook: los dos ya comprobaron el correo.
+    """
+    repo = UserRepositoryImpl(db)
+
+    user = repo.get_user_by_email(email=email)
+    if user:
+        from user_management_service.core.security import create_access_token
+        token = create_access_token(
+            data={
+                "sub": str(user.id_usuario),
+                "email": user.correo,
+                "rol": user.rol,
+            }
+        )
+
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user_id": user.id_usuario,
+            "email": user.correo,
+            "nombre": user.nombre,
+            "rol": user.rol,
+            "photo_url": getattr(user, "foto_path", None) or "",
+        }
+
+    # Una contraseña aleatoria para cumplir el NOT NULL de la tabla. Si algún
+    # día quiere entrar con correo y contraseña, la puede cambiar con
+    # «¿Olvidaste tu contraseña?».
+    random_password = secrets.token_urlsafe(32)
+
+    class _TmpRegister:
+        def __init__(self, nombre, correo, password, tipo_discapacidad=None, rol=None):
+            self.nombre = nombre
+            self.correo = correo
+            self.password = password
+            self.tipo_discapacidad = tipo_discapacidad
+            self.rol = rol
+
+    # Siempre como estudiante: docente y director necesitan su código de
+    # invitación, y por esta vía no se pide.
+    tmp = _TmpRegister(nombre=name or email.split("@")[0], correo=email, password=random_password, tipo_discapacidad=None, rol="estudiante")
+
+    use_case = CreateUserUseCase(user_repository=repo)
+    created = use_case.execute(tmp)
+
+    from user_management_service.core.security import create_access_token
+    token = create_access_token(
+        data={
+            "sub": str(created["id_usuario"]),
+            "email": created["correo"],
+            "rol": created["rol"],
+        }
+    )
+
+    return {"access_token": token, "token_type": "bearer", "user_id": created["id_usuario"], "email": created["correo"], "nombre": created["nombre"], "rol": created["rol"]}
+
+
 @router.post("/google")
 def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
     """
-    Endpoint que recibe `id_token` proveniente del cliente (Flutter).
-    Flujo:
-      1) Verificar el id_token con las APIs de Google.
-      2) Extraer `email` y `name`.
-      3) Si el usuario existe -> generar JWT (login).
-      4) Si no existe -> crear usuario (registro) y generar JWT.
+    Entrar o registrarse con Google: POST /api/auth/google
+
+    Recibe el access token (web) o el ID token (móvil), comprueba con Google
+    que es de esta app y que el correo está verificado, y abre sesión con esa
+    cuenta o la crea.
     """
     try:
         token_value = _extract_google_token(request_data)
@@ -198,99 +338,26 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
             email, name = _parse_dev_identity(token_value)
             email_verified = True
         elif token_type == 'access_token':
-            # Para un access token real, usamos Google userinfo endpoint para obtener el email.
-            import requests
-
-            response = requests.get(
-                'https://www.googleapis.com/oauth2/v3/userinfo',
-                headers={'Authorization': f'Bearer {token_value}'},
-                timeout=10,
+            email, name, email_verified = _google_identity_from_access_token(
+                token_value, _google_client_ids()
             )
-            response.raise_for_status()
-            payload = response.json()
-            email = payload.get('email')
-            name = payload.get('name') or payload.get('given_name') or ''
-            email_verified = payload.get('email_verified') is True
         else:
-            # 1) Verificar el token con la librería oficial
-            request = google_requests.Request()
-            # Si configuras GOOGLE_CLIENT_ID en el entorno, lo usamos como audience
-            google_client_id = os.getenv("GOOGLE_CLIENT_ID")
-            if google_client_id:
-                idinfo = google_id_token.verify_oauth2_token(token_value, request, audience=google_client_id)
-            else:
-                idinfo = google_id_token.verify_oauth2_token(token_value, request)
+            email, name, email_verified = _google_identity_from_id_token(
+                token_value, _google_client_ids()
+            )
 
-            # idinfo contiene campos como 'email', 'name', 'sub' (google user id)
-            email = idinfo.get("email")
-            name = idinfo.get("name") or idinfo.get("given_name") or ""
-
-            # Verificar que Google indique que el email está verificado
-            # Algunos payloads usan 'email_verified' o 'verified_email'
-            email_verified = idinfo.get("email_verified") if idinfo.get("email_verified") is not None else idinfo.get("verified_email")
-            if not email_verified:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="El correo de Google no está verificado. Por favor verifica tu cuenta de Google.",
-                )
+        # Antes solo se miraba con el ID token: con un access token entraba
+        # también una cuenta de Google con el correo sin verificar.
+        if not email_verified:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="El correo de Google no está verificado. Por favor verifica tu cuenta de Google.",
+            )
 
         if not email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ID token inválido: falta email")
 
-        repo = UserRepositoryImpl(db)
-
-        # 2) Buscar usuario existente
-        existing_user = repo.get_user_by_email(email=email)
-        if existing_user:
-            # Generar token directamente para el usuario existente
-            from user_management_service.core.security import create_access_token
-            token = create_access_token(
-                data={
-                    "sub": str(existing_user.id_usuario),
-                    "email": existing_user.correo,
-                    "rol": existing_user.rol,
-                }
-            )
-
-            return {
-                "access_token": token,
-                "token_type": "bearer",
-                "user_id": existing_user.id_usuario,
-                "email": existing_user.correo,
-                "nombre": existing_user.nombre,
-                "rol": existing_user.rol,
-                "photo_url": getattr(existing_user, "foto_path", None) or "",
-            }
-
-        # 3) Si no existe, registrar uno nuevo usando el caso de uso existente
-        # Generar una contraseña aleatoria para cumplir la restricción NOT NULL en la tabla
-        random_password = secrets.token_urlsafe(32)
-
-        # Construir un objeto similar al que espera CreateUserUseCase
-        class _TmpRegister:
-            def __init__(self, nombre, correo, password, tipo_discapacidad=None, rol=None):
-                self.nombre = nombre
-                self.correo = correo
-                self.password = password
-                self.tipo_discapacidad = tipo_discapacidad
-                self.rol = rol
-
-        tmp = _TmpRegister(nombre=name or email.split("@")[0], correo=email, password=random_password, tipo_discapacidad=None, rol="estudiante")
-
-        use_case = CreateUserUseCase(user_repository=repo)
-        created = use_case.execute(tmp)
-
-        # Crear token para el nuevo usuario
-        from user_management_service.core.security import create_access_token
-        token = create_access_token(
-            data={
-                "sub": str(created["id_usuario"]),
-                "email": created["correo"],
-                "rol": created["rol"],
-            }
-        )
-
-        return {"access_token": token, "token_type": "bearer", "user_id": created["id_usuario"], "email": created["correo"], "nombre": created["nombre"], "rol": created["rol"]}
+        return _session_for(db, email, name)
 
     except ValueError as e:
         # Errores lanzados por google-auth al verificar el token
@@ -299,3 +366,138 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error en servidor: {str(e)}")
+
+
+class FacebookRequest(BaseModel):
+    code: str
+    redirect_uri: str
+
+
+@router.post("/facebook")
+def facebook_sign_in(request_data: FacebookRequest, db: Session = Depends(get_db)):
+    """
+    Entrar o registrarse con Facebook: POST /api/auth/facebook
+
+    La app manda a la persona a Facebook y Facebook la devuelve con un
+    `code`. Aquí se canjea ese código por un token usando la clave secreta de
+    la app, que nunca sale del servidor. Así el token es por fuerza de
+    Code4All: un código de otra app no se puede canjear con nuestra clave.
+    """
+    app_id = os.getenv("FACEBOOK_APP_ID", "").strip()
+    app_secret = os.getenv("FACEBOOK_APP_SECRET", "").strip()
+    if not app_id or not app_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El inicio con Facebook no está configurado en el servidor.",
+        )
+
+    try:
+        exchange = requests.get(
+            f"{FACEBOOK_GRAPH_URL}/oauth/access_token",
+            params={
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "redirect_uri": request_data.redirect_uri,
+                "code": request_data.code,
+            },
+            timeout=10,
+        )
+        access_token = exchange.json().get("access_token") if exchange.status_code == 200 else None
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Facebook no aceptó el inicio de sesión. Vuelve a intentarlo.",
+            )
+
+        # appsecret_proof: Facebook rechaza la llamada si el token no se
+        # emitió para esta app.
+        proof = hmac.new(app_secret.encode(), access_token.encode(), hashlib.sha256).hexdigest()
+        profile = requests.get(
+            f"{FACEBOOK_GRAPH_URL}/me",
+            params={
+                "fields": "id,name,email",
+                "access_token": access_token,
+                "appsecret_proof": proof,
+            },
+            timeout=10,
+        )
+        if profile.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="No se pudo leer tu perfil de Facebook. Vuelve a intentarlo.",
+            )
+        data = profile.json()
+    except HTTPException:
+        raise
+    except requests.RequestException:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="No se pudo hablar con Facebook. Vuelve a intentarlo en un momento.",
+        )
+
+    # Facebook solo entrega el correo principal, que ya confirmó. Las cuentas
+    # abiertas con un teléfono no tienen, y quien no da permiso tampoco.
+    email = (data.get("email") or "").strip()
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Tu cuenta de Facebook no comparte un correo electrónico. "
+                "Entra con Google o regístrate con tu correo."
+            ),
+        )
+
+    return _session_for(db, email, data.get("name") or "")
+
+
+class ForgotPasswordRequest(BaseModel):
+    correo: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
+
+FORGOT_PASSWORD_REPLY = (
+    "Si hay una cuenta con ese correo, te enviamos un enlace para cambiar la "
+    "contraseña. Revisa también la carpeta de spam."
+)
+
+
+@router.post("/password/forgot")
+def forgot_password(request_data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Pedir el enlace para cambiar la contraseña: POST /api/auth/password/forgot
+
+    Responde lo mismo haya o no una cuenta con ese correo.
+    """
+    if not mailer.mail_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="La recuperación de contraseña no está configurada en el servidor.",
+        )
+
+    frontend_url = os.getenv("FRONTEND_URL", "").strip() or DEFAULT_FRONTEND_URL
+    password_reset.request_reset(UserRepositoryImpl(db), str(request_data.correo), frontend_url)
+    return {"detail": FORGOT_PASSWORD_REPLY}
+
+
+@router.post("/password/reset")
+def reset_password(request_data: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Elegir la contraseña nueva con el enlace del correo: POST /api/auth/password/reset
+    """
+    try:
+        password_reset.reset_password(
+            UserRepositoryImpl(db), request_data.token, request_data.password
+        )
+    except password_reset.InvalidResetLink:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El enlace ya no sirve: caducó o ya se usó. Pide uno nuevo.",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return {"detail": "Listo. Ya puedes iniciar sesión con tu contraseña nueva."}

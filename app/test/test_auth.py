@@ -89,3 +89,27 @@ def test_google_session_carries_the_role(monkeypatch):
     claims = decode_access_token(result['access_token'])
     assert claims['rol'] == 'docente'
     assert claims['sub'] == '5'
+
+
+def test_a_google_token_of_another_app_is_rejected(monkeypatch):
+    # Antes bastaba cualquier access token de Google: una página ajena con
+    # «Entrar con Google» podía usar el de sus visitantes para entrar aquí.
+    import app.presentation.api.auth_routes as auth_routes
+
+    class Answer:
+        status_code = 200
+
+        def json(self):
+            return {
+                'aud': 'otra-app.apps.googleusercontent.com',
+                'email': 'laura@univalle.edu.co',
+                'email_verified': 'true',
+            }
+
+    monkeypatch.setenv('GOOGLE_CLIENT_ID', 'code4all.apps.googleusercontent.com')
+    monkeypatch.setattr(auth_routes.requests, 'get', lambda url, **kwargs: Answer())
+
+    with pytest.raises(HTTPException) as error:
+        auth_routes.google_sign_in(IdTokenRequest(access_token='ya29.token'), db=None)
+
+    assert error.value.status_code == 401

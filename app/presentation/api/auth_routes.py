@@ -3,6 +3,8 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 import secrets
 
+import requests
+
 # Dependencias para verificar ID token de Google
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
@@ -175,6 +177,75 @@ def login_endpoint(request_data: LoginRequest, db: Session = Depends(get_db)):
         )
 
 
+GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+
+def _google_client_ids() -> set[str]:
+    """Los Client ID de Google de la app. Se pueden poner varios, con comas."""
+    raw = os.getenv("GOOGLE_CLIENT_ID", "")
+    ids = {part.strip() for part in raw.split(",") if part.strip()}
+    if not ids:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El inicio con Google no está configurado en el servidor (falta GOOGLE_CLIENT_ID).",
+        )
+    return ids
+
+
+def _google_identity_from_access_token(token: str, client_ids: set[str]) -> tuple[str, str, bool]:
+    """Correo, nombre y si Google verificó el correo, a partir de un access token.
+
+    Antes se preguntaba directamente a userinfo, que responde a cualquier
+    access token de Google, sea de la app que sea. Una página cualquiera con
+    «Iniciar sesión con Google» podía usar el token de sus visitantes para
+    entrar en Code4All como ellos. tokeninfo dice para qué app se emitió.
+    """
+    info = requests.get(GOOGLE_TOKENINFO_URL, params={"access_token": token}, timeout=10)
+    if info.status_code != 200:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de Google no válido")
+    data = info.json()
+
+    if data.get("aud") not in client_ids and data.get("azp") not in client_ids:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ese inicio de sesión de Google no es de Code4All.",
+        )
+
+    email = data.get("email")
+    verified = str(data.get("email_verified", "")).lower() == "true"
+
+    name = ""
+    profile = requests.get(
+        GOOGLE_USERINFO_URL,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    if profile.status_code == 200:
+        payload = profile.json()
+        name = payload.get("name") or payload.get("given_name") or ""
+
+    return email, name, verified
+
+
+def _google_identity_from_id_token(token: str, client_ids: set[str]) -> tuple[str, str, bool]:
+    request = google_requests.Request()
+    # verify_oauth2_token sin audience aceptaba ID tokens de cualquier app.
+    idinfo = google_id_token.verify_oauth2_token(token, request)
+    if idinfo.get("aud") not in client_ids:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ese inicio de sesión de Google no es de Code4All.",
+        )
+
+    email = idinfo.get("email")
+    name = idinfo.get("name") or idinfo.get("given_name") or ""
+    verified = idinfo.get("email_verified")
+    if verified is None:
+        verified = idinfo.get("verified_email")
+    return email, name, verified is True or str(verified).lower() == "true"
+
+
 @router.post("/google")
 def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
     """
@@ -198,41 +269,21 @@ def google_sign_in(request_data: IdTokenRequest, db: Session = Depends(get_db)):
             email, name = _parse_dev_identity(token_value)
             email_verified = True
         elif token_type == 'access_token':
-            # Para un access token real, usamos Google userinfo endpoint para obtener el email.
-            import requests
-
-            response = requests.get(
-                'https://www.googleapis.com/oauth2/v3/userinfo',
-                headers={'Authorization': f'Bearer {token_value}'},
-                timeout=10,
+            email, name, email_verified = _google_identity_from_access_token(
+                token_value, _google_client_ids()
             )
-            response.raise_for_status()
-            payload = response.json()
-            email = payload.get('email')
-            name = payload.get('name') or payload.get('given_name') or ''
-            email_verified = payload.get('email_verified') is True
         else:
-            # 1) Verificar el token con la librería oficial
-            request = google_requests.Request()
-            # Si configuras GOOGLE_CLIENT_ID en el entorno, lo usamos como audience
-            google_client_id = os.getenv("GOOGLE_CLIENT_ID")
-            if google_client_id:
-                idinfo = google_id_token.verify_oauth2_token(token_value, request, audience=google_client_id)
-            else:
-                idinfo = google_id_token.verify_oauth2_token(token_value, request)
+            email, name, email_verified = _google_identity_from_id_token(
+                token_value, _google_client_ids()
+            )
 
-            # idinfo contiene campos como 'email', 'name', 'sub' (google user id)
-            email = idinfo.get("email")
-            name = idinfo.get("name") or idinfo.get("given_name") or ""
-
-            # Verificar que Google indique que el email está verificado
-            # Algunos payloads usan 'email_verified' o 'verified_email'
-            email_verified = idinfo.get("email_verified") if idinfo.get("email_verified") is not None else idinfo.get("verified_email")
-            if not email_verified:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="El correo de Google no está verificado. Por favor verifica tu cuenta de Google.",
-                )
+        # Antes solo se miraba con el ID token: con un access token entraba
+        # también una cuenta de Google con el correo sin verificar.
+        if not email_verified:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="El correo de Google no está verificado. Por favor verifica tu cuenta de Google.",
+            )
 
         if not email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ID token inválido: falta email")
