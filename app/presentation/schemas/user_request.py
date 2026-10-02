@@ -1,0 +1,1 @@
+# user request sirve para definir los esquemas de datos que se utilizarán para validar las solicitudes de los clientes, como la creación y actualización de usuarios. Estos esquemas se utilizan para asegurarse de que los datos recibidos en las solicitudes cumplen con los requisitos necesarios antes de procesarlos en la lógica de negocio.

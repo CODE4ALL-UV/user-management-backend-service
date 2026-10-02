@@ -1,0 +1,52 @@
+# Cómo se despliega el backend en Render.
+#
+# Con este archivo en la raíz, Render puede crear el servicio solo («Blueprint»)
+# en lugar de tener que rellenar el formulario a mano. Y queda escrito en el
+# repositorio: dentro de seis meses se sabrá cómo estaba configurado.
+#
+# Los secretos NO van aquí. `sync: false` significa que el valor se escribe en
+# el panel de Render y no se guarda en el repositorio, que es donde no debe
+# estar.
+
+services:
+  - type: web
+    name: code4all-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+
+    # La base de datos es Neon y vive fuera de Render, así que no hace falta
+    # que Render cree ninguna.
+    envVars:
+      # Cadena de conexión de Neon. Se copia del panel de Neon.
+      - key: DATABASE_URL
+        sync: false
+
+      # Clave con la que se firman las sesiones. Render puede generarla sola,
+      # y así nunca pasa por el repositorio.
+      - key: SECRET_KEY
+        generateValue: true
+
+      - key: ALGORITHM
+        value: HS256
+
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+
+      # Identificadores de Google para el inicio de sesión.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_SERVER_CLIENT_ID
+        sync: false
+
+      # Códigos para registrarse como docente o director. Sin ellos esos
+      # registros quedan cerrados: solo se crean estudiantes.
+      - key: DOCENTE_SIGNUP_CODE
+        sync: false
+      - key: DIRECTOR_SIGNUP_CODE
+        sync: false
+
+    # Render llama aquí para saber si el servicio sigue vivo. Esta ruta no
+    # toca la base de datos, así que responde aunque Neon esté dormida.
+    healthCheckPath: /api/signs/status

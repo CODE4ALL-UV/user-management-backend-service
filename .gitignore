@@ -1,0 +1,18 @@
+# Secretos: la cadena de conexion de Neon y la clave de firma.
+#
+# Estuvo rastreado hasta aqui, asi que sus valores viven en el historial y hay
+# que darlos por comprometidos: se rotan, no basta con dejar de subirlo.
+.env
+.env.*
+!.env.example
+
+# Modelo de MediaPipe: se descarga solo la primera vez (7,8 MB)
+models/
+
+# Bytecode: se regenera en cada maquina y solo provoca conflictos
+__pycache__/
+*.pyc
+
+# Entorno virtual
+.venv/
+venv/
