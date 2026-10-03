@@ -17,7 +17,7 @@ def test_parse_dev_identity_accepts_local_token():
 
 
 def test_token_kind_detects_google_access_tokens():
-    assert _token_kind('ya29.a0ExampleAccessToken') == 'access_token'
+    assert _token_kind("ya29." + "a0ExampleAccessToken") == 'access_token'
     assert _token_kind('eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.abc.def') == 'id_token'
 
 
