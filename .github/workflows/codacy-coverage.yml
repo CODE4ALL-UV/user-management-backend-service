@@ -31,7 +31,7 @@ jobs:
       # 4. Ejecutar pruebas y generar el archivo coverage.xml
       - name: Run tests with coverage
         run: |
-          pytest --cov=. --cov-report=xml
+          pytest tests --cov=. --cov-report=xml
 
       # 5. Enviar el reporte coverage.xml a Codacy usando el Token guardado
       - name: Run codacy-coverage-reporter
