@@ -3,7 +3,7 @@ Repositorio Back-end para el modulo Gestión de Usuarios
 
 Cuentas, inicio de sesión (correo y Google) y foto de perfil. Es también quien
 firma los tokens de sesión: los demás microservicios los comprueban con
-`user_management_service.auth`.
+`user_management_service.auth`....
 
 | Rutas | Para qué |
 |---|---|
