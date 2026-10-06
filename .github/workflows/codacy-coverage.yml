@@ -9,6 +9,8 @@ on:
 jobs:
   test-and-coverage:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       # 1. Descargar el código del repositorio
