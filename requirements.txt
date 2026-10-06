@@ -17,3 +17,5 @@ youtube-transcript-api
 mediapipe
 opencv-python-headless
 numpy
+pytest
+pytest-cov
