@@ -61,15 +61,30 @@ def _fake_db(monkeypatch):
     monkeypatch.delenv("ALLOW_DEV_LOGIN", raising=False)
 
 
-def _google_answers(monkeypatch, tokeninfo, userinfo=None):
+def _google_answers(monkeypatch, tokeninfo, userinfo=None, tokeninfo_status=200, userinfo_status=200):
     def fake_get(url, **kwargs):
         if url == auth_routes.GOOGLE_TOKENINFO_URL:
-            return FakeResponse(200, tokeninfo)
+            return FakeResponse(tokeninfo_status, tokeninfo)
         if url == auth_routes.GOOGLE_USERINFO_URL:
-            return FakeResponse(200, userinfo or {"name": "Laura Gómez"})
+            return FakeResponse(userinfo_status, userinfo or {"name": "Laura Gómez"})
         raise AssertionError(url)
 
     monkeypatch.setattr(auth_routes.requests, "get", fake_get)
+
+
+def _id_token_says(monkeypatch, idinfo):
+    """Lo que contestaría google-auth al verificar un ID token (móvil)."""
+
+    def fake_verify(token, request):
+        if isinstance(idinfo, Exception):
+            raise idinfo
+        return idinfo
+
+    monkeypatch.setattr(auth_routes.google_id_token, "verify_oauth2_token", fake_verify)
+
+
+def _google_id_token():
+    return auth_routes.google_sign_in(IdTokenRequest(id_token="a.b.c"), db=None)
 
 
 def _google():
@@ -160,6 +175,142 @@ def test_without_client_id_google_says_it_is_not_configured(monkeypatch):
     assert error.value.status_code == 503
 
 
+def test_an_access_token_google_does_not_recognize_is_rejected(monkeypatch):
+    _google_answers(monkeypatch, {"error": "invalid_token"}, tokeninfo_status=400)
+
+    with pytest.raises(HTTPException) as error:
+        _google()
+
+    assert error.value.status_code == 401
+    assert error.value.detail == "Token de Google no válido"
+
+
+def test_google_accepts_any_of_the_configured_client_ids_also_as_azp(monkeypatch):
+    # La web y el móvil tienen Client ID distintos; tokeninfo puede traer el
+    # de la app en `azp` y no en `aud`.
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", f"web.apps.googleusercontent.com, {CLIENT_ID}")
+    _google_answers(
+        monkeypatch,
+        {"aud": "otro", "azp": CLIENT_ID, "email": "laura@univalle.edu.co", "email_verified": "true"},
+    )
+
+    assert _google()["user_id"] == 5
+
+
+def test_if_google_does_not_give_the_name_it_comes_from_the_email(monkeypatch):
+    _google_answers(
+        monkeypatch,
+        {"aud": CLIENT_ID, "email": "nuevo.estudiante@gmail.com", "email_verified": "true"},
+        userinfo_status=401,
+    )
+
+    result = _google()
+
+    assert result["nombre"] == "nuevo.estudiante"
+    assert FakeRepo.created[0]["nombre"] == "nuevo.estudiante"
+
+
+def test_a_new_account_gets_a_random_password_nobody_knows(monkeypatch):
+    # La columna no admite nulos; la contraseña se puede cambiar luego con
+    # «¿Olvidaste tu contraseña?».
+    _google_answers(
+        monkeypatch,
+        {"aud": CLIENT_ID, "email": "nuevo@gmail.com", "email_verified": "true"},
+    )
+
+    _google()
+
+    saved = FakeRepo.created[0]["password"]
+    assert saved.startswith("$2")  # guardada con bcrypt, nunca en claro
+    assert FakeRepo.created[0]["rol"] == "estudiante"
+
+
+def test_a_valid_id_token_opens_the_session(monkeypatch):
+    # Algunas versiones de Google mandan `verified_email` en vez de
+    # `email_verified`.
+    _id_token_says(
+        monkeypatch,
+        {"aud": CLIENT_ID, "email": "laura@univalle.edu.co", "given_name": "Laura", "verified_email": "true"},
+    )
+
+    result = _google_id_token()
+
+    assert result["rol"] == "docente"
+    assert result["email"] == "laura@univalle.edu.co"
+    assert decode_access_token(result["access_token"])["sub"] == "5"
+
+
+def test_a_valid_id_token_registers_a_new_person_with_their_name(monkeypatch):
+    _id_token_says(
+        monkeypatch,
+        {"aud": CLIENT_ID, "email": "nuevo@gmail.com", "name": "Nuevo Móvil", "email_verified": True},
+    )
+
+    result = _google_id_token()
+
+    assert result["rol"] == "estudiante"
+    assert FakeRepo.created[0]["nombre"] == "Nuevo Móvil"
+
+
+@pytest.mark.parametrize("verified", [{"email_verified": False}, {"verified_email": "false"}, {}])
+def test_an_id_token_with_unverified_email_is_rejected(monkeypatch, verified):
+    _id_token_says(monkeypatch, {"aud": CLIENT_ID, "email": "laura@univalle.edu.co", **verified})
+
+    with pytest.raises(HTTPException) as error:
+        _google_id_token()
+
+    assert error.value.status_code == 401
+    assert "no está verificado" in error.value.detail
+
+
+def test_a_verified_token_without_email_is_a_bad_request(monkeypatch):
+    _id_token_says(monkeypatch, {"aud": CLIENT_ID, "email_verified": True})
+
+    with pytest.raises(HTTPException) as error:
+        _google_id_token()
+
+    assert error.value.status_code == 400
+    assert FakeRepo.created == []
+
+
+def test_an_id_token_google_auth_rejects_is_401_with_the_reason(monkeypatch):
+    _id_token_says(monkeypatch, ValueError("Token expired"))
+
+    with pytest.raises(HTTPException) as error:
+        _google_id_token()
+
+    assert error.value.status_code == 401
+    assert error.value.detail == "Token expired"
+
+
+def test_an_unexpected_failure_while_checking_google_is_a_500(monkeypatch):
+    _id_token_says(monkeypatch, RuntimeError("se cayó algo"))
+
+    with pytest.raises(HTTPException) as error:
+        _google_id_token()
+
+    assert error.value.status_code == 500
+    assert "se cayó algo" in error.value.detail
+
+
+def test_a_dev_token_enabled_locally_registers_with_its_name(monkeypatch):
+    monkeypatch.setenv("ALLOW_DEV_LOGIN", "true")
+
+    result = auth_routes.google_sign_in(IdTokenRequest(id_token="dev:nuevo@local.test:Pepe"), db=None)
+
+    assert result["nombre"] == "Pepe"
+    assert FakeRepo.created[0]["correo"] == "nuevo@local.test"
+
+
+def test_a_malformed_dev_token_is_401(monkeypatch):
+    monkeypatch.setenv("ALLOW_DEV_LOGIN", "1")
+
+    with pytest.raises(HTTPException) as error:
+        auth_routes.google_sign_in(IdTokenRequest(id_token="dev:sin-correo"), db=None)
+
+    assert error.value.status_code == 401
+
+
 # --- Facebook ----------------------------------------------------------------
 
 
@@ -168,7 +319,7 @@ def _facebook_configured(monkeypatch):
     monkeypatch.setenv("FACEBOOK_APP_SECRET", "secreto-de-la-app")
 
 
-def _facebook_answers(monkeypatch, profile, exchange_status=200):
+def _facebook_answers(monkeypatch, profile, exchange_status=200, profile_status=200):
     calls = []
 
     def fake_get(url, params=None, **kwargs):
@@ -177,7 +328,7 @@ def _facebook_answers(monkeypatch, profile, exchange_status=200):
             payload = {"access_token": "EAAB-token"} if exchange_status == 200 else {"error": {}}
             return FakeResponse(exchange_status, payload)
         if url.endswith("/me"):
-            return FakeResponse(200, profile)
+            return FakeResponse(profile_status, profile)
         raise AssertionError(url)
 
     monkeypatch.setattr(auth_routes.requests, "get", fake_get)
@@ -227,6 +378,46 @@ def test_a_code_facebook_does_not_accept_opens_nothing(monkeypatch):
         _facebook()
 
     assert error.value.status_code == 401
+
+
+def test_an_exchange_without_access_token_opens_nothing(monkeypatch):
+    _facebook_configured(monkeypatch)
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/oauth/access_token"):
+            return FakeResponse(200, {})
+        raise AssertionError("no debería pedir el perfil sin token")
+
+    monkeypatch.setattr(auth_routes.requests, "get", fake_get)
+
+    with pytest.raises(HTTPException) as error:
+        _facebook()
+
+    assert error.value.status_code == 401
+
+
+def test_if_facebook_does_not_give_the_profile_nothing_is_opened(monkeypatch):
+    # Por ejemplo, si el token no se emitió para esta app y falla el
+    # appsecret_proof.
+    _facebook_configured(monkeypatch)
+    _facebook_answers(monkeypatch, {"error": {"code": 190}}, profile_status=400)
+
+    with pytest.raises(HTTPException) as error:
+        _facebook()
+
+    assert error.value.status_code == 401
+    assert "perfil de Facebook" in error.value.detail
+    assert FakeRepo.created == []
+
+
+def test_a_facebook_account_without_name_is_named_after_the_email(monkeypatch):
+    _facebook_configured(monkeypatch)
+    _facebook_answers(monkeypatch, {"id": "1", "email": " pepe@hotmail.com "})
+
+    result = _facebook()
+
+    assert result["email"] == "pepe@hotmail.com"
+    assert FakeRepo.created[0]["nombre"] == "pepe"
 
 
 def test_a_facebook_account_without_email_is_told_what_to_do(monkeypatch):

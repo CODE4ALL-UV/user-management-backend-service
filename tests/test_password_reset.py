@@ -8,11 +8,13 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
+import jwt
 import pytest
 
 from user_management_service.application.use_cases import password_reset
 from user_management_service.core import mailer
 from user_management_service.core.security import (
+    ALGORITHM,
     decode_access_token,
     get_password_hash,
     verify_password,
@@ -42,7 +44,8 @@ class FakeRepo:
 def sent(monkeypatch):
     mails = []
     monkeypatch.setattr(mailer, "send_mail", lambda **mail: mails.append(mail))
-    password_reset._last_sent.clear()
+    # Un registro de envíos vacío solo para esta prueba.
+    monkeypatch.setattr(password_reset, "_last_sent", {})
     return mails
 
 
@@ -147,7 +150,7 @@ def test_if_the_mail_fails_one_can_ask_again(monkeypatch):
         sent.append(mail)
 
     monkeypatch.setattr(mailer, "send_mail", flaky)
-    password_reset._last_sent.clear()
+    monkeypatch.setattr(password_reset, "_last_sent", {})
     repo = FakeRepo()
 
     password_reset.request_reset(repo, "ana@example.com", "https://x")
@@ -177,6 +180,7 @@ def test_brevo_receives_the_mail(monkeypatch):
 
     monkeypatch.setenv("BREVO_API_KEY", "clave-brevo")
     monkeypatch.setenv("MAIL_FROM", "code4all@example.com")
+    monkeypatch.delenv("MAIL_FROM_NAME", raising=False)
     monkeypatch.setattr(
         mailer.requests, "post", lambda url, **kwargs: calls.append((url, kwargs)) or Ok()
     )
@@ -188,3 +192,116 @@ def test_brevo_receives_the_mail(monkeypatch):
     assert kwargs["headers"]["api-key"] == "clave-brevo"
     assert kwargs["json"]["sender"] == {"name": "Code4All", "email": "code4all@example.com"}
     assert kwargs["json"]["to"] == [{"email": "ana@example.com", "name": "Ana"}]
+
+
+def _signed_link(claims):
+    """Un enlace firmado con la clave de los enlaces, con lo que se quiera dentro."""
+    claims = {"exp": datetime.now(timezone.utc) + timedelta(minutes=5), **claims}
+    return jwt.encode(claims, password_reset._signing_key(), algorithm=ALGORITHM)
+
+
+def test_a_link_signed_for_another_purpose_does_not_work():
+    repo = FakeRepo()
+    token = _signed_link(
+        {"sub": "3", "purpose": "otra-cosa", "pwd": password_reset._fingerprint(repo.user.password)}
+    )
+
+    with pytest.raises(password_reset.InvalidResetLink):
+        password_reset.reset_password(repo, token, "clave-nueva")
+
+    assert verify_password("clave-vieja", repo.user.password)
+
+
+@pytest.mark.parametrize("claims", [{"sub": "no-es-un-numero"}, {}])
+def test_a_link_without_a_valid_user_id_does_not_work(claims):
+    repo = FakeRepo()
+    token = _signed_link(
+        {"purpose": password_reset.PURPOSE, "pwd": password_reset._fingerprint(repo.user.password), **claims}
+    )
+
+    with pytest.raises(password_reset.InvalidResetLink):
+        password_reset.reset_password(repo, token, "clave-nueva")
+
+
+def test_a_link_for_an_account_that_no_longer_exists_does_not_work():
+    repo = FakeRepo()
+    token = password_reset.create_reset_token(repo.user)
+    repo.user.id_usuario = 99  # la cuenta 3 ya no está
+
+    with pytest.raises(password_reset.InvalidResetLink):
+        password_reset.reset_password(repo, token, "clave-nueva")
+
+
+def test_the_name_in_the_mail_cannot_inject_html(sent):
+    repo = FakeRepo()
+    repo.user.nombre = '<img src=x onerror="alert(1)">'
+
+    password_reset.request_reset(repo, "ana@example.com", "https://x")
+
+    assert "<img" not in sent[0]["html"]
+    assert "&lt;img" in sent[0]["html"]
+    # El texto plano va tal cual: no lo interpreta ningún navegador.
+    assert repo.user.nombre in sent[0]["text"]
+
+
+def test_locally_without_brevo_the_mail_is_printed(monkeypatch, capsys):
+    monkeypatch.delenv("BREVO_API_KEY", raising=False)
+    monkeypatch.delenv("MAIL_FROM", raising=False)
+    monkeypatch.setenv("ALLOW_DEV_LOGIN", "yes")
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("no debería llamar a Brevo")
+
+    monkeypatch.setattr(mailer.requests, "post", no_network)
+
+    assert mailer.mail_configured()
+    mailer.send_mail(
+        to_email="ana@example.com", to_name="Ana", subject="Asunto", text="El enlace", html="<p>x</p>"
+    )
+
+    out = capsys.readouterr().out
+    assert "Correo para ana@example.com" in out
+    assert "Asunto" in out
+    assert "El enlace" in out
+
+
+def test_without_brevo_and_outside_local_the_mail_fails(monkeypatch):
+    monkeypatch.setenv("BREVO_API_KEY", "clave")
+    monkeypatch.delenv("MAIL_FROM", raising=False)
+    monkeypatch.delenv("ALLOW_DEV_LOGIN", raising=False)
+
+    with pytest.raises(mailer.MailNotConfigured):
+        mailer.send_mail(to_email="ana@example.com", to_name="Ana", subject="s", text="t", html="h")
+
+
+def test_brevo_uses_the_configured_sender_name_and_the_email_as_fallback_name(monkeypatch):
+    calls = []
+
+    class Ok:
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setenv("BREVO_API_KEY", "clave-brevo")
+    monkeypatch.setenv("MAIL_FROM", " code4all@example.com ")
+    monkeypatch.setenv("MAIL_FROM_NAME", "Curso Code4All")
+    monkeypatch.setattr(mailer.requests, "post", lambda url, **kwargs: calls.append(kwargs) or Ok())
+
+    mailer.send_mail(to_email="ana@example.com", to_name="", subject="s", text="t", html="h")
+
+    sent_json = calls[0]["json"]
+    assert sent_json["sender"] == {"name": "Curso Code4All", "email": "code4all@example.com"}
+    assert sent_json["to"] == [{"email": "ana@example.com", "name": "ana@example.com"}]
+    assert calls[0]["timeout"] == 10
+
+
+def test_if_brevo_refuses_the_mail_the_error_is_raised(monkeypatch):
+    class Refused:
+        def raise_for_status(self):
+            raise mailer.requests.HTTPError("401 Unauthorized")
+
+    monkeypatch.setenv("BREVO_API_KEY", "clave-mala")
+    monkeypatch.setenv("MAIL_FROM", "code4all@example.com")
+    monkeypatch.setattr(mailer.requests, "post", lambda url, **kwargs: Refused())
+
+    with pytest.raises(mailer.requests.HTTPError):
+        mailer.send_mail(to_email="ana@example.com", to_name="Ana", subject="s", text="t", html="h")

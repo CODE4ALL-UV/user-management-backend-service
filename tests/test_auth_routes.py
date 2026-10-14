@@ -1,3 +1,9 @@
+"""Las piezas pequeñas de las rutas de autenticación.
+
+El token local `dev:`, cómo se reconoce cada tipo de token de Google y el
+código de invitación que piden docente y director.
+"""
+
 import pytest
 from fastapi import HTTPException
 
@@ -16,15 +22,46 @@ def test_parse_dev_identity_accepts_local_token():
     assert name == 'Juan'
 
 
+def test_parse_dev_identity_takes_the_name_from_the_email_when_missing():
+    assert _parse_dev_identity('dev: ana@local.test ') == ('ana@local.test', 'ana')
+    assert _parse_dev_identity('dev:ana@local.test:') == ('ana@local.test', 'ana')
+
+
+@pytest.mark.parametrize(
+    'token, message',
+    [
+        ('ana@local.test', 'modo desarrollo'),
+        ('dev:   ', 'vacío'),
+        ('dev:sin-arroba:Ana', 'correo válido'),
+    ],
+)
+def test_parse_dev_identity_rejects_malformed_tokens(token, message):
+    with pytest.raises(ValueError, match=message):
+        _parse_dev_identity(token)
+
+
 def test_token_kind_detects_google_access_tokens():
     assert _token_kind("ya29." + "a0ExampleAccessToken") == 'access_token'
     assert _token_kind('eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.abc.def') == 'id_token'
+
+
+def test_token_kind_recognizes_empty_local_and_unknown_tokens():
+    assert _token_kind('') == 'empty'
+    assert _token_kind('   ') == 'empty'
+    assert _token_kind(None) == 'empty'
+    assert _token_kind(' dev:ana@local.test') == 'dev_token'
+    assert _token_kind('un-texto-cualquiera') == 'unknown'
 
 
 def test_extract_google_token_prefers_access_token_when_present():
     request = IdTokenRequest(access_token='access-token-value', id_token='id-token-value')
 
     assert _extract_google_token(request) == 'access-token-value'
+
+
+def test_extract_google_token_falls_back_to_id_token_or_empty():
+    assert _extract_google_token(IdTokenRequest(id_token='id-token-value')) == 'id-token-value'
+    assert _extract_google_token(IdTokenRequest()) == ''
 
 
 def test_dev_token_is_rejected_unless_enabled(monkeypatch):
