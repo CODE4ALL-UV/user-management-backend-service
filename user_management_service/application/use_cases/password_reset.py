@@ -81,7 +81,7 @@ def request_reset(repo, email: str, frontend_url: str) -> None:
     quién está registrado. Por eso tampoco se avisa si el envío falla; queda
     en el registro del servidor.
     """
-    user = repo.find_by_email_any_case(email)
+    user = repo.get_user_by_email(email)
     if user is None:
         return
 

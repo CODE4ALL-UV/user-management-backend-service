@@ -42,29 +42,32 @@ def test_users_are_found_by_email_and_by_id(db_session):
     assert repo.get_user_by_id(ana.id_usuario + 1000) is None
 
 
-def test_the_exact_email_search_distinguishes_capitals(db_session):
-    repo = UserRepositoryImpl(db_session)
-    _ana(repo)
-
-    assert repo.get_user_by_email("ana@example.com") is None
-
-
-def test_find_by_email_any_case_ignores_capitals_and_spaces(db_session):
+def test_the_email_search_ignores_capitals_and_spaces(db_session):
     repo = UserRepositoryImpl(db_session)
     ana = _ana(repo)
 
-    assert repo.find_by_email_any_case("Ana@example.com").id_usuario == ana.id_usuario
-    assert repo.find_by_email_any_case("  ANA@EXAMPLE.COM ").id_usuario == ana.id_usuario
-    assert repo.find_by_email_any_case("otra@example.com") is None
+    assert repo.get_user_by_email("ana@example.com").id_usuario == ana.id_usuario
+    assert repo.get_user_by_email("  ANA@EXAMPLE.COM ").id_usuario == ana.id_usuario
+    assert repo.get_user_by_email("otra@example.com") is None
 
 
-def test_find_by_email_any_case_prefers_the_exact_match(db_session):
-    # Si hay dos cuentas que solo cambian en mayúsculas, gana la escrita igual.
+def test_the_email_search_prefers_the_exact_match(db_session):
+    # Cuentas de antes que solo cambian en mayúsculas: cada una sigue
+    # entrando con su correo tal como lo escribió.
     repo = UserRepositoryImpl(db_session)
-    _ana(repo)
+    upper = _ana(repo)
     lower = _ana(repo, correo="ana@example.com", nombre="Ana minúsculas")
 
-    assert repo.find_by_email_any_case("ana@example.com").id_usuario == lower.id_usuario
+    assert repo.get_user_by_email("ana@example.com").id_usuario == lower.id_usuario
+    assert repo.get_user_by_email("Ana@example.com").id_usuario == upper.id_usuario
+
+
+def test_without_an_exact_match_the_oldest_account_wins(db_session):
+    repo = UserRepositoryImpl(db_session)
+    lower = _ana(repo, correo="ana@example.com")
+    _ana(repo, correo="ANA@example.com")
+
+    assert repo.get_user_by_email("Ana@Example.com").id_usuario == lower.id_usuario
 
 
 def test_disability_types_are_looked_up_by_id(db_session):
@@ -133,9 +136,6 @@ class _ContractOnly(UserRepository):
     def update_photo_path(self, user_id, photo_path):
         return super().update_photo_path(user_id, photo_path)
 
-    def find_by_email_any_case(self, email):
-        return super().find_by_email_any_case(email)
-
     def update_password(self, user_id, password_hash):
         return super().update_password(user_id, password_hash)
 
@@ -153,5 +153,4 @@ def test_the_repository_contract_methods_return_nothing():
     assert repo.get_tipo_discapacidad_by_id(1) is None
     assert repo.create_user({}) is None
     assert repo.update_photo_path(1, "/uploads/x.png") is None
-    assert repo.find_by_email_any_case("ana@example.com") is None
     assert repo.update_password(1, "hash") is None

@@ -14,8 +14,24 @@ class UserRepositoryImpl(UserRepository):
         self.db = db_session
 
     def get_user_by_email(self, email: str) -> Optional[Any]:
-        """Busca un usuario en NeonDB usando la columna 'correo'."""
-        return self.db.query(Usuario).filter(Usuario.correo == email).first()
+        """Busca la cuenta de ese correo sin distinguir mayúsculas.
+
+        «Ana@...» y «ana@...» son la misma persona: quien se registró de una
+        forma tiene que poder entrar escribiéndolo de la otra, o con Google,
+        que lo da en minúsculas. Si de antes quedaron dos cuentas que solo se
+        diferencian en eso, gana la escrita exactamente igual y, si no, la
+        más antigua.
+        """
+        email = email.strip()
+        exact = self.db.query(Usuario).filter(Usuario.correo == email).first()
+        if exact is not None:
+            return exact
+        return (
+            self.db.query(Usuario)
+            .filter(func.lower(Usuario.correo) == email.lower())
+            .order_by(Usuario.id_usuario)
+            .first()
+        )
 
     def get_user_by_id(self, user_id: int) -> Optional[Any]:
         return self.db.query(Usuario).filter(Usuario.id_usuario == user_id).first()
@@ -31,18 +47,6 @@ class UserRepositoryImpl(UserRepository):
         self.db.commit()
         self.db.refresh(new_user)
         return new_user
-
-    def find_by_email_any_case(self, email: str) -> Optional[Any]:
-        """Quien olvida la contraseña no siempre recuerda cómo escribió el
-        correo: «Ana@...» y «ana@...» son la misma persona."""
-        exact = self.get_user_by_email(email)
-        if exact is not None:
-            return exact
-        return (
-            self.db.query(Usuario)
-            .filter(func.lower(Usuario.correo) == email.strip().lower())
-            .first()
-        )
 
     def update_password(self, user_id: int, password_hash: str) -> Any:
         user = self.get_user_by_id(user_id)

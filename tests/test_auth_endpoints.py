@@ -300,3 +300,52 @@ def test_a_too_short_new_password_is_explained(db_session):
     assert response.status_code == 400
     assert response.json()["detail"] == "La contraseña debe tener al menos 6 caracteres."
     assert _login().status_code == 200
+
+
+# --- Mayúsculas en el correo -------------------------------------------------
+
+
+def test_the_email_is_saved_in_lowercase(db_session):
+    response = _register(correo="Ana@Example.com")
+
+    assert response.status_code == 201
+    assert response.json()["correo"] == "ana@example.com"
+    assert db_session.query(Usuario).one().correo == "ana@example.com"
+
+
+def test_logging_in_ignores_capitals_in_the_email(db_session):
+    _register(correo="Ana@Example.com")
+
+    for email in ("ana@example.com", "ANA@EXAMPLE.COM", "Ana@Example.com"):
+        assert _login(email=email).status_code == 200
+
+
+def test_an_account_saved_with_capitals_can_log_in_in_lowercase(db_session):
+    # Las cuentas creadas antes de guardar en minúsculas siguen tal cual.
+    old = _saved_user(db_session, correo="Ana@Example.com")
+
+    response = _login(email="ana@example.com")
+
+    assert response.status_code == 200
+    assert response.json()["user_id"] == old.id_usuario
+    # El token lleva el correo como está guardado, que es con el que se
+    # firmaron sus ediciones del temario.
+    assert decode_access_token(response.json()["access_token"])["email"] == "Ana@Example.com"
+
+
+def test_the_same_email_with_other_capitals_cannot_be_registered_again(db_session):
+    _saved_user(db_session, correo="Ana@Example.com")
+
+    response = _register(correo="ana@example.com", nombre="Otra Ana")
+
+    assert response.status_code == 400
+    assert db_session.query(Usuario).count() == 1
+
+
+def test_google_or_facebook_finds_the_account_registered_with_capitals(db_session):
+    old = _saved_user(db_session, correo="Ana@Example.com")
+
+    session = auth_routes._session_for(db_session, "ana@example.com", "Ana")
+
+    assert session["user_id"] == old.id_usuario
+    assert db_session.query(Usuario).count() == 1

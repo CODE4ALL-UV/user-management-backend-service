@@ -42,9 +42,10 @@ class CreateUserUseCase:
                 tipo_discapacidad = None
 
         # 3. Construir el diccionario respetando los nombres exactos de tu tabla "usuario"
+        # El correo se guarda en minúsculas, como lo dan Google y Facebook.
         new_user_dict = {
             "nombre": user_data.nombre,
-            "correo": user_data.correo,
+            "correo": str(user_data.correo).strip().lower(),
             "password": hashed_password,
             "tipo_discapacidad": tipo_discapacidad,
             "rol": self._normalize_role(getattr(user_data, "rol", None))

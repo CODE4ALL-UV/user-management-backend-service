@@ -30,7 +30,7 @@ class FakeRepo:
             password=get_password_hash("clave-vieja"),
         )
 
-    def find_by_email_any_case(self, email):
+    def get_user_by_email(self, email):
         return self.user if email.lower() == self.user.correo.lower() else None
 
     def get_user_by_id(self, user_id):

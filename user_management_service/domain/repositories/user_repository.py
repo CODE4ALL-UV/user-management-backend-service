@@ -4,7 +4,7 @@ from typing import Optional, Any
 class UserRepository(ABC):
     @abstractmethod
     def get_user_by_email(self, email: str) -> Optional[Any]:
-        """Debe buscar un usuario por su correo electrónico."""
+        """Debe buscar un usuario por su correo, sin distinguir mayúsculas."""
         pass
 
     @abstractmethod
@@ -25,11 +25,6 @@ class UserRepository(ABC):
     @abstractmethod
     def update_photo_path(self, user_id: int, photo_path: str) -> Any:
         """Debe actualizar la ruta de la foto del usuario."""
-        pass
-
-    @abstractmethod
-    def find_by_email_any_case(self, email: str) -> Optional[Any]:
-        """Busca por correo sin distinguir mayúsculas."""
         pass
 
     @abstractmethod
